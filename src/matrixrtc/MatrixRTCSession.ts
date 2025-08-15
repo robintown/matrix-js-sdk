@@ -27,9 +27,9 @@ import { KnownMembership } from "../@types/membership.ts";
 import { MembershipManager } from "./MembershipManager.ts";
 import { EncryptionManager, type IEncryptionManager } from "./EncryptionManager.ts";
 import { logDurationSync } from "../utils.ts";
-import { type Statistics, type RTCNotificationType } from "./types.ts";
+import { type Statistics, type RTCNotificationType, Status } from "./types.ts";
 import { RoomKeyTransport } from "./RoomKeyTransport.ts";
-import type { IMembershipManager } from "./IMembershipManager.ts";
+import { MembershipManagerEvent, type IMembershipManager } from "./IMembershipManager.ts";
 import { RTCEncryptionManager } from "./RTCEncryptionManager.ts";
 import {
     RoomAndToDeviceEvents,
@@ -46,6 +46,7 @@ export enum MatrixRTCSessionEvent {
     // separate from MembershipsChanged, ie. independent of whether our member event
     // has successfully gone through.
     JoinStateChanged = "join_state_changed",
+    ConnectionStateChanged = "connection_state_changed",
     // The key used to encrypt media has changed
     EncryptionKeyChanged = "encryption_key_changed",
     /** The membership manager had to shut down caused by an unrecoverable error */
@@ -58,6 +59,7 @@ export type MatrixRTCSessionEventHandlerMap = {
         newMemberships: CallMembership[],
     ) => void;
     [MatrixRTCSessionEvent.JoinStateChanged]: (isJoined: boolean) => void;
+    [MatrixRTCSessionEvent.ConnectionStateChanged]: (isConnected: boolean) => void;
     [MatrixRTCSessionEvent.EncryptionKeyChanged]: (
         key: Uint8Array,
         encryptionKeyIndex: number,
@@ -397,6 +399,10 @@ export class MatrixRTCSession extends TypedEventEmitter<
         return this.membershipManager?.isJoined() ?? false;
     }
 
+    public isConnected(): boolean {
+        return this.membershipManager?.status === Status.Connected
+    }
+
     /**
      * Performs cleanup & removes timers for client shutdown
      */
@@ -497,12 +503,13 @@ export class MatrixRTCSession extends TypedEventEmitter<
         this.pendingNotificationToSend = this.joinConfig?.notificationType;
 
         // Join!
-        this.membershipManager!.join(fociPreferred, fociActive, (e) => {
+        this.membershipManager.join(fociPreferred, fociActive, (e) => {
             this.logger.error("MembershipManager encountered an unrecoverable error: ", e);
             this.emit(MatrixRTCSessionEvent.MembershipManagerError, e);
             this.emit(MatrixRTCSessionEvent.JoinStateChanged, this.isJoined());
         });
-        this.encryptionManager!.join(joinConfig);
+        this.encryptionManager.join(joinConfig);
+        this.membershipManager.on(MembershipManagerEvent.StatusChanged, () => this.emit(MatrixRTCSessionEvent.ConnectionStateChanged, this.isConnected()))
 
         this.emit(MatrixRTCSessionEvent.JoinStateChanged, true);
     }
